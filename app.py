@@ -4,17 +4,20 @@ import math
 import pandas as pd
 
 st.set_page_config(page_title="Bencinas Pro", layout="wide")
-
 st.title("🚗 Encuentra la bencina más conveniente")
 
 TOKEN = st.secrets["API_CNE"]
 
-headers = {
-    "Authorization": f"Bearer {TOKEN}"
-}
+headers = {"Authorization": f"Bearer {TOKEN}"}
 
-# 🔽 función limpiar texto
+
+# -------------------------
+# UTILIDADES
+# -------------------------
+
 def limpiar(texto):
+    if not texto:
+        return ""
     texto = str(texto).lower().strip()
     return (
         texto.replace("á", "a")
@@ -24,100 +27,142 @@ def limpiar(texto):
         .replace("ú", "u")
     )
 
-# 📏 distancia
+
 def distancia(lat1, lon1, lat2, lon2):
     R = 6371
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
 
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
 
-    return R * c
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-# 🔽 traer estaciones (solo 1 vez)
+
+# -------------------------
+# CARGA DE DATOS (PAGINADO)
+# -------------------------
+
 @st.cache_data
 def cargar_estaciones():
-    resp = requests.get("https://api.cne.cl/api/v4/estaciones?offset=0", headers=headers)
-    data = resp.json()
+    estaciones = []
+    offset = 0
+    limit = 500
 
-    if isinstance(data, dict):
-        return data.get("data", [])
-    return data
+    while True:
+        url = f"https://api.cne.cl/api/v4/estaciones?offset={offset}"
+        resp = requests.get(url, headers=headers)
+
+        if resp.status_code != 200:
+            break
+
+        data = resp.json().get("data", [])
+        if not data:
+            break
+
+        estaciones.extend(data)
+        offset += limit
+
+    return estaciones
+
 
 estaciones = cargar_estaciones()
 
-# 🔥 obtener comunas dinámicas
-comunas = sorted(list(set([
-    est.get("ubicacion", {}).get("nombre_comuna")
+
+# -------------------------
+# REGIONES / COMUNAS
+# -------------------------
+
+regiones = sorted(list(set([
+    est.get("ubicacion", {}).get("nombre_region")
     for est in estaciones
-    if est.get("ubicacion", {}).get("nombre_comuna")
+    if est.get("ubicacion", {}).get("nombre_region")
 ])))
 
-# 🔽 inputs
 col1, col2 = st.columns(2)
 
 with col1:
-    ciudad = st.selectbox("Selecciona tu comuna", comunas)
+    region = st.selectbox("Región", regiones)
+
+    comunas = sorted(list(set([
+        est.get("ubicacion", {}).get("nombre_comuna")
+        for est in estaciones
+        if est.get("ubicacion", {}).get("nombre_region") == region
+    ])))
+
+    comuna = st.selectbox("Comuna", comunas)
+
+with col2:
     tipo_bencina = st.selectbox("Tipo de bencina", ["93", "95", "97"])
 
-# 🔥 usar coordenadas promedio de la comuna
-def obtener_coordenadas_comuna(nombre_comuna):
+
+# -------------------------
+# CENTRO COMUNA (APPROX)
+# -------------------------
+
+def centro_comuna(nombre_comuna):
     coords = [
         (
-            float(est.get("ubicacion", {}).get("latitud", 0)),
-            float(est.get("ubicacion", {}).get("longitud", 0))
+            float(e.get("ubicacion", {}).get("latitud", 0)),
+            float(e.get("ubicacion", {}).get("longitud", 0)),
         )
-        for est in estaciones
-        if est.get("ubicacion", {}).get("nombre_comuna") == nombre_comuna
+        for e in estaciones
+        if e.get("ubicacion", {}).get("nombre_comuna") == nombre_comuna
     ]
 
-    if coords:
-        lat_prom = sum(c[0] for c in coords) / len(coords)
-        lon_prom = sum(c[1] for c in coords) / len(coords)
-        return lat_prom, lon_prom
+    if not coords:
+        return 0, 0
 
-    return 0, 0
+    return (
+        sum(c[0] for c in coords) / len(coords),
+        sum(c[1] for c in coords) / len(coords),
+    )
 
-lat_usuario, lon_usuario = obtener_coordenadas_comuna(ciudad)
 
-st.write(f"📍 Ubicación estimada: {ciudad}")
+lat_user, lon_user = centro_comuna(comuna)
 
-# 🔽 buscar
+st.write(f"📍 Ubicación estimada: {comuna}")
+
+
+# -------------------------
+# BUSQUEDA
+# -------------------------
+
 if st.button("Buscar"):
 
-    ciudad_clean = limpiar(ciudad)
     resultados = []
 
     for est in estaciones:
 
         ubicacion = est.get("ubicacion", {})
-        comuna = limpiar(ubicacion.get("nombre_comuna", ""))
+        if ubicacion.get("nombre_comuna") != comuna:
+            continue
 
-        if ciudad_clean == comuna:
+        precios = est.get("precios", {})
+        precio = precios.get(tipo_bencina, {}).get("precio")
 
-            marca = est.get("distribuidor", {}).get("marca", "Sin marca")
-            direccion = ubicacion.get("direccion", "")
+        if not precio:
+            continue
 
-            precios = est.get("precios", {})
-            precio = precios.get(tipo_bencina, {}).get("precio")
+        lat = float(ubicacion.get("latitud", 0))
+        lon = float(ubicacion.get("longitud", 0))
 
-            lat = float(ubicacion.get("latitud", 0))
-            lon = float(ubicacion.get("longitud", 0))
+        dist = distancia(lat_user, lon_user, lat, lon)
 
-            if precio:
-                dist = distancia(lat_usuario, lon_usuario, lat, lon)
+        resultados.append({
+            "marca": est.get("distribuidor", {}).get("marca", "Sin marca"),
+            "direccion": ubicacion.get("direccion", ""),
+            "precio": float(precio),
+            "lat": lat,
+            "lon": lon,
+            "distancia": dist
+        })
 
-                resultados.append({
-                    "marca": marca,
-                    "direccion": direccion,
-                    "precio": float(precio),
-                    "lat": lat,
-                    "lon": lon,
-                    "distancia": dist
-                })
-
-    resultados = sorted(resultados, key=lambda x: (x["precio"], x["distancia"]))
+    resultados.sort(key=lambda x: (x["precio"], x["distancia"]))
 
     if resultados:
 
@@ -131,7 +176,7 @@ if st.button("Buscar"):
                 ### ⛽ {r['marca']}
                 📍 {r['direccion']}  
                 💰 **${int(r['precio'])}**  
-                📏 {round(r['distancia'],2)} km
+                📏 {round(r['distancia'], 2)} km  
                 ---
                 """
             )
