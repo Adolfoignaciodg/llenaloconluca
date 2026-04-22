@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import math
 
 st.title("🚗 Buscador de bencinas")
 
@@ -10,88 +9,72 @@ headers = {
     "Authorization": f"Bearer {TOKEN}"
 }
 
-# 🏙️ ciudades predefinidas
-ciudades = {
-    "Osorno": (-40.574, -73.133),
-    "Puerto Montt": (-41.469, -72.942),
-    "Valdivia": (-39.814, -73.245),
-    "Santiago": (-33.448, -70.669)
-}
-
-ciudad = st.selectbox("Selecciona tu ciudad", list(ciudades.keys()))
-
-lat_usuario, lon_usuario = ciudades[ciudad]
-
-# 📏 distancia
-def calcular_distancia(lat1, lon1, lat2, lon2):
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-    return R * c
-
-# 🎚️ radio
-radio = st.slider("Radio de búsqueda (km)", 5, 100, 30)
+# 🏙️ seleccionar ciudad
+ciudad = st.selectbox("Selecciona tu ciudad", ["Osorno", "Puerto Montt", "Valdivia", "Santiago"])
 
 if st.button("Buscar estaciones"):
 
-    response = requests.get(
+    # 🔽 estaciones
+    est_resp = requests.get(
         "https://api.cne.cl/api/v4/estaciones",
         headers=headers
     )
 
-    if response.status_code == 200:
+    # 🔽 precios
+    precio_resp = requests.get(
+        "https://api.cne.cl/api/ea/precio/combustibleliquido",
+        headers=headers
+    )
 
-        data = response.json()
+    if est_resp.status_code == 200 and precio_resp.status_code == 200:
+
+        estaciones = est_resp.json()
+        precios = precio_resp.json()["data"]
+
+        # 🔍 función para buscar precio
+        def obtener_precio(region, tipo="Gasolina 93"):
+            for p in precios:
+                if p["region"] == region and tipo in p["combustible"]:
+                    return p["precio"]
+            return None
+
         resultados = []
 
-        for est in data:
+        for est in estaciones:
 
-            lat_est = est.get("latitud")
-            lon_est = est.get("longitud")
+            comuna_api = est.get("comuna", "").lower()
 
-            if not lat_est or not lon_est:
-                continue
-
-            try:
-                dist = calcular_distancia(
-                    lat_usuario,
-                    lon_usuario,
-                    float(lat_est),
-                    float(lon_est)
-                )
-            except:
-                continue
-
-            if dist <= radio:
+            if ciudad.lower() in comuna_api:
 
                 nombre = est.get("razon_social", "Sin nombre")
                 direccion = est.get("direccion_calle", "")
                 comuna = est.get("comuna", "")
+                region = est.get("region")
+
+                precio = obtener_precio(region)
 
                 resultados.append({
                     "nombre": nombre,
                     "direccion": direccion,
-                    "comuna": comuna,
-                    "distancia": round(dist, 2)
+                    "precio": precio
                 })
 
-        resultados = sorted(resultados, key=lambda x: x["distancia"])
+        # ordenar por precio
+        resultados = [r for r in resultados if r["precio"] is not None]
+        resultados = sorted(resultados, key=lambda x: x["precio"])
 
+        # mostrar
         if resultados:
-            st.subheader("⛽ Estaciones cercanas")
+            st.subheader("⛽ Mejores opciones")
 
             for r in resultados[:10]:
                 st.write(
                     f"**{r['nombre']}**  \n"
-                    f"{r['direccion']} - {r['comuna']}  \n"
-                    f"📍 {r['distancia']} km"
+                    f"{r['direccion']}  \n"
+                    f"💰 ${r['precio']}"
                 )
         else:
-            st.warning("No se encontraron estaciones cercanas")
+            st.warning("No se encontraron datos")
 
     else:
         st.error("Error con la API")
