@@ -7,24 +7,14 @@ st.set_page_config(page_title="Bencinas Pro", layout="wide")
 
 st.title("🚗 Encuentra la bencina más conveniente")
 
-# 🔐 token
-if "API_CNE" not in st.secrets:
-    st.error("Falta API_CNE en secrets.toml")
-    st.stop()
-
 TOKEN = st.secrets["API_CNE"]
 
 headers = {
     "Authorization": f"Bearer {TOKEN}"
 }
 
-# -------------------------
-# UTILIDADES
-# -------------------------
-
+# 🔽 función limpiar texto
 def limpiar(texto):
-    if not texto:
-        return ""
     texto = str(texto).lower().strip()
     return (
         texto.replace("á", "a")
@@ -34,161 +24,100 @@ def limpiar(texto):
         .replace("ú", "u")
     )
 
-
+# 📏 distancia
 def distancia(lat1, lon1, lat2, lon2):
     R = 6371
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
 
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1))
-        * math.cos(math.radians(lat2))
-        * math.sin(dlon / 2) ** 2
-    )
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
-
-# -------------------------
-# CARGA DE ESTACIONES (FIX API)
-# -------------------------
-
+# 🔽 traer estaciones (solo 1 vez)
 @st.cache_data
 def cargar_estaciones():
-    estaciones = []
-    offset = 0
-    limit = 500
+    resp = requests.get("https://api.cne.cl/api/v4/estaciones?offset=0", headers=headers)
+    data = resp.json()
 
-    while True:
-        url = f"https://api.cne.cl/api/v4/estaciones?offset={offset}"
-        resp = requests.get(url, headers=headers, timeout=20)
-
-        if resp.status_code != 200:
-            st.error(f"Error API CNE: {resp.status_code}")
-            break
-
-        try:
-            data = resp.json()
-        except Exception:
-            st.error("Respuesta de la API no es JSON válido")
-            break
-
-        # 🔥 normalización de respuesta (ESTO ARREGLA TU ERROR)
-        if isinstance(data, dict):
-            chunk = data.get("data", [])
-        elif isinstance(data, list):
-            chunk = data
-        else:
-            chunk = []
-
-        if not chunk:
-            break
-
-        estaciones.extend(chunk)
-
-        if len(chunk) < limit:
-            break
-
-        offset += limit
-
-    return estaciones
-
+    if isinstance(data, dict):
+        return data.get("data", [])
+    return data
 
 estaciones = cargar_estaciones()
 
-if not estaciones:
-    st.warning("No se pudieron cargar estaciones")
-    st.stop()
-
-
-# -------------------------
-# COMUNAS
-# -------------------------
-
+# 🔥 obtener comunas dinámicas
 comunas = sorted(list(set([
     est.get("ubicacion", {}).get("nombre_comuna")
     for est in estaciones
     if est.get("ubicacion", {}).get("nombre_comuna")
 ])))
 
-
+# 🔽 inputs
 col1, col2 = st.columns(2)
 
 with col1:
-    comuna = st.selectbox("Selecciona tu comuna", comunas)
-
-with col2:
+    ciudad = st.selectbox("Selecciona tu comuna", comunas)
     tipo_bencina = st.selectbox("Tipo de bencina", ["93", "95", "97"])
 
-
-# -------------------------
-# CENTRO COMUNA
-# -------------------------
-
-def centro_comuna(nombre_comuna):
+# 🔥 usar coordenadas promedio de la comuna
+def obtener_coordenadas_comuna(nombre_comuna):
     coords = [
         (
-            float(e.get("ubicacion", {}).get("latitud", 0)),
-            float(e.get("ubicacion", {}).get("longitud", 0)),
+            float(est.get("ubicacion", {}).get("latitud", 0)),
+            float(est.get("ubicacion", {}).get("longitud", 0))
         )
-        for e in estaciones
-        if e.get("ubicacion", {}).get("nombre_comuna") == nombre_comuna
+        for est in estaciones
+        if est.get("ubicacion", {}).get("nombre_comuna") == nombre_comuna
     ]
 
-    if not coords:
-        return 0, 0
+    if coords:
+        lat_prom = sum(c[0] for c in coords) / len(coords)
+        lon_prom = sum(c[1] for c in coords) / len(coords)
+        return lat_prom, lon_prom
 
-    return (
-        sum(c[0] for c in coords) / len(coords),
-        sum(c[1] for c in coords) / len(coords),
-    )
+    return 0, 0
 
+lat_usuario, lon_usuario = obtener_coordenadas_comuna(ciudad)
 
-lat_user, lon_user = centro_comuna(comuna)
+st.write(f"📍 Ubicación estimada: {ciudad}")
 
-st.write(f"📍 Ubicación estimada: {comuna}")
-
-
-# -------------------------
-# BUSQUEDA
-# -------------------------
-
+# 🔽 buscar
 if st.button("Buscar"):
 
+    ciudad_clean = limpiar(ciudad)
     resultados = []
 
     for est in estaciones:
 
         ubicacion = est.get("ubicacion", {})
+        comuna = limpiar(ubicacion.get("nombre_comuna", ""))
 
-        if ubicacion.get("nombre_comuna") != comuna:
-            continue
+        if ciudad_clean == comuna:
 
-        precios = est.get("precios", {})
-        precio = precios.get(tipo_bencina, {}).get("precio")
+            marca = est.get("distribuidor", {}).get("marca", "Sin marca")
+            direccion = ubicacion.get("direccion", "")
 
-        if not precio:
-            continue
+            precios = est.get("precios", {})
+            precio = precios.get(tipo_bencina, {}).get("precio")
 
-        try:
             lat = float(ubicacion.get("latitud", 0))
             lon = float(ubicacion.get("longitud", 0))
-        except:
-            continue
 
-        dist = distancia(lat_user, lon_user, lat, lon)
+            if precio:
+                dist = distancia(lat_usuario, lon_usuario, lat, lon)
 
-        resultados.append({
-            "marca": est.get("distribuidor", {}).get("marca", "Sin marca"),
-            "direccion": ubicacion.get("direccion", ""),
-            "precio": float(precio),
-            "lat": lat,
-            "lon": lon,
-            "distancia": dist
-        })
+                resultados.append({
+                    "marca": marca,
+                    "direccion": direccion,
+                    "precio": float(precio),
+                    "lat": lat,
+                    "lon": lon,
+                    "distancia": dist
+                })
 
-    resultados.sort(key=lambda x: (x["precio"], x["distancia"]))
+    resultados = sorted(resultados, key=lambda x: (x["precio"], x["distancia"]))
 
     if resultados:
 
@@ -202,7 +131,7 @@ if st.button("Buscar"):
                 ### ⛽ {r['marca']}
                 📍 {r['direccion']}  
                 💰 **${int(r['precio'])}**  
-                📏 {round(r['distancia'], 2)} km  
+                📏 {round(r['distancia'],2)} km
                 ---
                 """
             )
@@ -211,4 +140,4 @@ if st.button("Buscar"):
         st.map(df[["lat", "lon"]])
 
     else:
-        st.warning("No se encontraron estaciones para esta búsqueda")
+        st.warning("No se encontraron estaciones")
