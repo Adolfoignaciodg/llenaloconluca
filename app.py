@@ -4,18 +4,25 @@ import math
 
 st.title("🚗 Buscador de bencinas")
 
-# 🔑 token desde Streamlit Cloud
 TOKEN = st.secrets["API_CNE"]
 
 headers = {
     "Authorization": f"Bearer {TOKEN}"
 }
 
-# 📍 inputs
-lat_usuario = st.number_input("Latitud", value=-40.574)
-lon_usuario = st.number_input("Longitud", value=-73.133)
+# 🏙️ ciudades predefinidas
+ciudades = {
+    "Osorno": (-40.574, -73.133),
+    "Puerto Montt": (-41.469, -72.942),
+    "Valdivia": (-39.814, -73.245),
+    "Santiago": (-33.448, -70.669)
+}
 
-# 📏 función distancia
+ciudad = st.selectbox("Selecciona tu ciudad", list(ciudades.keys()))
+
+lat_usuario, lon_usuario = ciudades[ciudad]
+
+# 📏 distancia
 def calcular_distancia(lat1, lon1, lat2, lon2):
     R = 6371
     dlat = math.radians(lat2 - lat1)
@@ -26,9 +33,10 @@ def calcular_distancia(lat1, lon1, lat2, lon2):
 
     return R * c
 
+# 🎚️ radio
+radio = st.slider("Radio de búsqueda (km)", 5, 100, 30)
 
-# 🔘 botón
-if st.button("Buscar estaciones cercanas"):
+if st.button("Buscar estaciones"):
 
     response = requests.get(
         "https://api.cne.cl/api/v4/estaciones",
@@ -38,9 +46,6 @@ if st.button("Buscar estaciones cercanas"):
     if response.status_code == 200:
 
         data = response.json()
-
-        st.success("Conexión OK ✅")
-
         resultados = []
 
         for est in data:
@@ -61,8 +66,7 @@ if st.button("Buscar estaciones cercanas"):
             except:
                 continue
 
-            # filtrar cercanas (10 km)
-            if dist <= 10:
+            if dist <= radio:
 
                 nombre = est.get("razon_social", "Sin nombre")
                 direccion = est.get("direccion_calle", "")
@@ -75,10 +79,8 @@ if st.button("Buscar estaciones cercanas"):
                     "distancia": round(dist, 2)
                 })
 
-        # ordenar por distancia
         resultados = sorted(resultados, key=lambda x: x["distancia"])
 
-        # mostrar resultados
         if resultados:
             st.subheader("⛽ Estaciones cercanas")
 
@@ -92,5 +94,4 @@ if st.button("Buscar estaciones cercanas"):
             st.warning("No se encontraron estaciones cercanas")
 
     else:
-        st.error("Error con la API ❌")
-        st.write(response.text)
+        st.error("Error con la API")
