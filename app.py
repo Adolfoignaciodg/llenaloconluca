@@ -3,14 +3,18 @@ import requests
 
 st.title("🚗 Buscador de bencinas")
 
+# 🔑 token desde Streamlit
 TOKEN = st.secrets["API_CNE"]
 
 headers = {
     "Authorization": f"Bearer {TOKEN}"
 }
 
-# 🏙️ seleccionar ciudad
-ciudad = st.selectbox("Selecciona tu ciudad", ["Osorno", "Puerto Montt", "Valdivia", "Santiago"])
+# 🏙️ selector de ciudad
+ciudad = st.selectbox(
+    "Selecciona tu ciudad",
+    ["Osorno", "Puerto Montt", "Valdivia", "Santiago"]
+)
 
 if st.button("Buscar estaciones"):
 
@@ -29,41 +33,50 @@ if st.button("Buscar estaciones"):
     if est_resp.status_code == 200 and precio_resp.status_code == 200:
 
         estaciones = est_resp.json()
-        precios = precio_resp.json()["data"]
+        precios = precio_resp.json().get("data", [])
 
-        # 🔍 función para buscar precio
-        def obtener_precio(region, tipo="Gasolina 93"):
+        # 🔍 función mejorada para encontrar precio
+        def obtener_precio(region, tipo="93"):
+
+            region = str(region).lower()
+
             for p in precios:
-                if p["region"] == region and tipo in p["combustible"]:
-                    return p["precio"]
+
+                region_api = str(p.get("region", "")).lower()
+                combustible_api = str(p.get("combustible", "")).lower()
+
+                if region in region_api and tipo in combustible_api:
+                    return p.get("precio")
+
             return None
 
         resultados = []
 
         for est in estaciones:
 
-            comuna_api = est.get("comuna", "").lower()
+            comuna_api = str(est.get("comuna", "")).lower()
 
-            if ciudad.lower() in comuna_api:
+            # 🔥 filtro más flexible
+            if ciudad.lower() in comuna_api or comuna_api in ciudad.lower():
 
                 nombre = est.get("razon_social", "Sin nombre")
                 direccion = est.get("direccion_calle", "")
                 comuna = est.get("comuna", "")
-                region = est.get("region")
+                region = est.get("region", "")
 
                 precio = obtener_precio(region)
 
-                resultados.append({
-                    "nombre": nombre,
-                    "direccion": direccion,
-                    "precio": precio
-                })
+                if precio is not None:
+                    resultados.append({
+                        "nombre": nombre,
+                        "direccion": direccion,
+                        "precio": precio
+                    })
 
         # ordenar por precio
-        resultados = [r for r in resultados if r["precio"] is not None]
         resultados = sorted(resultados, key=lambda x: x["precio"])
 
-        # mostrar
+        # mostrar resultados
         if resultados:
             st.subheader("⛽ Mejores opciones")
 
@@ -78,3 +91,6 @@ if st.button("Buscar estaciones"):
 
     else:
         st.error("Error con la API")
+
+# 🧪 DEBUG opcional (puedes borrar después)
+# st.write(precios[:5])
