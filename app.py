@@ -36,42 +36,50 @@ if st.button("Buscar"):
 
         if isinstance(json_data, dict):
             estaciones = json_data.get("data", [])
-        elif isinstance(json_data, list):
-            estaciones = json_data
         else:
-            estaciones = []
+            estaciones = json_data
 
-        st.write(f"Total estaciones recibidas: {len(estaciones)}")
+        st.write(f"Total estaciones: {len(estaciones)}")
 
         resultados = []
         ciudad_clean = limpiar(ciudad)
 
         for est in estaciones:
 
-            # 🔥 usar dirección completa
-            direccion = f"{est.get('direccion_calle','')} {est.get('direccion_numero','')}"
-            direccion_clean = limpiar(direccion)
+            ubicacion = est.get("ubicacion", {})
 
-            if ciudad_clean in direccion_clean:
+            comuna = limpiar(ubicacion.get("nombre_comuna", ""))
+            direccion = ubicacion.get("direccion", "")
+
+            if ciudad_clean in comuna:
 
                 nombre = est.get("razon_social", "Sin nombre")
 
+                # 💰 precios reales por estación 🔥
+                precios = est.get("precios", {})
+                precio_93 = precios.get("93", {}).get("precio")
+
                 resultados.append({
                     "nombre": nombre,
-                    "direccion": direccion
+                    "direccion": direccion,
+                    "precio": precio_93
                 })
 
+        # ordenar por precio si existe
+        resultados = [r for r in resultados if r["precio"] is not None]
+        resultados = sorted(resultados, key=lambda x: float(x["precio"]))
+
         if resultados:
-            st.subheader("⛽ Estaciones encontradas")
+            st.subheader("⛽ Mejores opciones (Gasolina 93)")
 
-            for r in resultados[:20]:
-                st.write(f"**{r['nombre']}** - {r['direccion']}")
+            for r in resultados[:15]:
+                st.write(
+                    f"**{r['nombre']}**  \n"
+                    f"{r['direccion']}  \n"
+                    f"💰 ${r['precio']}"
+                )
         else:
-            st.warning("No se encontraron estaciones con ese filtro")
-
-            # 🔥 DEBUG REAL
-            st.subheader("🔍 Ejemplo de datos reales")
-            st.write(estaciones[:3])
+            st.warning("No se encontraron estaciones en esa ciudad")
 
     else:
         st.error("Error con la API")
