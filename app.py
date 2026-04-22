@@ -4,12 +4,19 @@ import math
 import pandas as pd
 
 st.set_page_config(page_title="Bencinas Pro", layout="wide")
+
 st.title("🚗 Encuentra la bencina más conveniente")
+
+# 🔐 token
+if "API_CNE" not in st.secrets:
+    st.error("Falta API_CNE en secrets.toml")
+    st.stop()
 
 TOKEN = st.secrets["API_CNE"]
 
-headers = {"Authorization": f"Bearer {TOKEN}"}
-
+headers = {
+    "Authorization": f"Bearer {TOKEN}"
+}
 
 # -------------------------
 # UTILIDADES
@@ -44,7 +51,7 @@ def distancia(lat1, lon1, lat2, lon2):
 
 
 # -------------------------
-# CARGA DE DATOS (PAGINADO)
+# CARGA DE ESTACIONES (FIX API)
 # -------------------------
 
 @st.cache_data
@@ -55,16 +62,34 @@ def cargar_estaciones():
 
     while True:
         url = f"https://api.cne.cl/api/v4/estaciones?offset={offset}"
-        resp = requests.get(url, headers=headers)
+        resp = requests.get(url, headers=headers, timeout=20)
 
         if resp.status_code != 200:
+            st.error(f"Error API CNE: {resp.status_code}")
             break
 
-        data = resp.json().get("data", [])
-        if not data:
+        try:
+            data = resp.json()
+        except Exception:
+            st.error("Respuesta de la API no es JSON válido")
             break
 
-        estaciones.extend(data)
+        # 🔥 normalización de respuesta (ESTO ARREGLA TU ERROR)
+        if isinstance(data, dict):
+            chunk = data.get("data", [])
+        elif isinstance(data, list):
+            chunk = data
+        else:
+            chunk = []
+
+        if not chunk:
+            break
+
+        estaciones.extend(chunk)
+
+        if len(chunk) < limit:
+            break
+
         offset += limit
 
     return estaciones
@@ -72,36 +97,33 @@ def cargar_estaciones():
 
 estaciones = cargar_estaciones()
 
+if not estaciones:
+    st.warning("No se pudieron cargar estaciones")
+    st.stop()
+
 
 # -------------------------
-# REGIONES / COMUNAS
+# COMUNAS
 # -------------------------
 
-regiones = sorted(list(set([
-    est.get("ubicacion", {}).get("nombre_region")
+comunas = sorted(list(set([
+    est.get("ubicacion", {}).get("nombre_comuna")
     for est in estaciones
-    if est.get("ubicacion", {}).get("nombre_region")
+    if est.get("ubicacion", {}).get("nombre_comuna")
 ])))
+
 
 col1, col2 = st.columns(2)
 
 with col1:
-    region = st.selectbox("Región", regiones)
-
-    comunas = sorted(list(set([
-        est.get("ubicacion", {}).get("nombre_comuna")
-        for est in estaciones
-        if est.get("ubicacion", {}).get("nombre_region") == region
-    ])))
-
-    comuna = st.selectbox("Comuna", comunas)
+    comuna = st.selectbox("Selecciona tu comuna", comunas)
 
 with col2:
     tipo_bencina = st.selectbox("Tipo de bencina", ["93", "95", "97"])
 
 
 # -------------------------
-# CENTRO COMUNA (APPROX)
+# CENTRO COMUNA
 # -------------------------
 
 def centro_comuna(nombre_comuna):
@@ -139,6 +161,7 @@ if st.button("Buscar"):
     for est in estaciones:
 
         ubicacion = est.get("ubicacion", {})
+
         if ubicacion.get("nombre_comuna") != comuna:
             continue
 
@@ -148,8 +171,11 @@ if st.button("Buscar"):
         if not precio:
             continue
 
-        lat = float(ubicacion.get("latitud", 0))
-        lon = float(ubicacion.get("longitud", 0))
+        try:
+            lat = float(ubicacion.get("latitud", 0))
+            lon = float(ubicacion.get("longitud", 0))
+        except:
+            continue
 
         dist = distancia(lat_user, lon_user, lat, lon)
 
@@ -185,4 +211,4 @@ if st.button("Buscar"):
         st.map(df[["lat", "lon"]])
 
     else:
-        st.warning("No se encontraron estaciones")
+        st.warning("No se encontraron estaciones para esta búsqueda")
