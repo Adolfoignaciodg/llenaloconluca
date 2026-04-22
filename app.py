@@ -9,7 +9,6 @@ headers = {
     "Authorization": f"Bearer {TOKEN}"
 }
 
-# selector ciudad
 ciudad = st.selectbox(
     "Selecciona tu ciudad",
     ["Osorno", "Puerto Montt", "Valdivia", "Santiago"]
@@ -17,7 +16,6 @@ ciudad = st.selectbox(
 
 if st.button("Buscar"):
 
-    # 🔥 IMPORTANTE: offset=0
     url = "https://api.cne.cl/api/v4/estaciones?offset=0"
 
     resp = requests.get(url, headers=headers)
@@ -26,8 +24,13 @@ if st.button("Buscar"):
 
         json_data = resp.json()
 
-        # 🔥 CLAVE: entrar a "data"
-        estaciones = json_data.get("data", [])
+        # 🔥 FIX CLAVE
+        if isinstance(json_data, dict):
+            estaciones = json_data.get("data", [])
+        elif isinstance(json_data, list):
+            estaciones = json_data
+        else:
+            estaciones = []
 
         st.write(f"Total estaciones recibidas: {len(estaciones)}")
 
@@ -48,14 +51,12 @@ if st.button("Buscar"):
                 })
 
         if resultados:
-
             st.subheader("⛽ Estaciones encontradas")
 
             for r in resultados[:15]:
                 st.write(f"**{r['nombre']}** - {r['direccion']}")
-
         else:
-            st.warning("No se encontraron estaciones en esta página (offset=0)")
+            st.warning("No se encontraron estaciones en esta página")
 
     else:
         st.error("Error con la API")
