@@ -1,7 +1,9 @@
 import streamlit as st
 import requests
 
-st.title("🚗 Bencinas por ciudad")
+st.set_page_config(page_title="Buscador de Bencinas", layout="wide")
+
+st.title("🚗 Encuentra la bencina más barata")
 
 TOKEN = st.secrets["API_CNE"]
 
@@ -32,55 +34,54 @@ if st.button("Buscar"):
 
     if resp.status_code == 200:
 
-        json_data = resp.json()
+        data = resp.json()
 
-        if isinstance(json_data, dict):
-            estaciones = json_data.get("data", [])
+        if isinstance(data, dict):
+            estaciones = data.get("data", [])
         else:
-            estaciones = json_data
+            estaciones = data
 
-        st.write(f"Total estaciones: {len(estaciones)}")
-
-        resultados = []
         ciudad_clean = limpiar(ciudad)
+        resultados = []
 
         for est in estaciones:
 
             ubicacion = est.get("ubicacion", {})
-
             comuna = limpiar(ubicacion.get("nombre_comuna", ""))
             direccion = ubicacion.get("direccion", "")
 
             if ciudad_clean in comuna:
 
-                nombre = est.get("razon_social", "Sin nombre")
+                marca = est.get("distribuidor", {}).get("marca", "Sin marca")
 
-                # 💰 precios reales por estación 🔥
                 precios = est.get("precios", {})
                 precio_93 = precios.get("93", {}).get("precio")
 
-                resultados.append({
-                    "nombre": nombre,
-                    "direccion": direccion,
-                    "precio": precio_93
-                })
+                if precio_93:
+                    resultados.append({
+                        "marca": marca,
+                        "direccion": direccion,
+                        "precio": float(precio_93)
+                    })
 
-        # ordenar por precio si existe
-        resultados = [r for r in resultados if r["precio"] is not None]
-        resultados = sorted(resultados, key=lambda x: float(x["precio"]))
+        resultados = sorted(resultados, key=lambda x: x["precio"])
 
         if resultados:
-            st.subheader("⛽ Mejores opciones (Gasolina 93)")
+
+            st.subheader("⛽ Mejores precios en tu ciudad")
 
             for r in resultados[:15]:
-                st.write(
-                    f"**{r['nombre']}**  \n"
-                    f"{r['direccion']}  \n"
-                    f"💰 ${r['precio']}"
+                st.markdown(
+                    f"""
+                    ### ⛽ {r['marca']}
+                    📍 {r['direccion']}  
+                    💰 **${int(r['precio'])}**
+                    ---
+                    """
                 )
+
         else:
-            st.warning("No se encontraron estaciones en esa ciudad")
+            st.warning("No se encontraron estaciones")
 
     else:
         st.error("Error con la API")
-        st.write(resp.text)
